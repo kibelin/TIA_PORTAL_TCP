@@ -3,6 +3,15 @@
 ## Overview
 
 This project demonstrates TCP/IP communication between a simulated **Siemens S7-1500 PLC** and a **Python-based MES simulator** using an ASCII-based protocol.
+The PLC acts as the **active TCP client** and the Python application acts as the **TCP server**.
+
+The process simulates a product moving through three logical stations:
+
+1. Product entry / Product ID request
+2. Scale conveyor / Weight reporting
+3. Label station / Label confirmation
+
+After the final acknowledgement, the product is considered transferred to the warehouse and the system becomes ready for the next product.
 
 - **PLC:** TCP client
 - **Python MES:** TCP server
@@ -12,25 +21,40 @@ This project demonstrates TCP/IP communication between a simulated **Siemens S7-
 
 ---
 
-## Communication Flow
+# Message Sequence
 
-```mermaid
-flowchart LR
-    A["S7-1500 PLC"] -->|"RW01"| B["Python MES"]
-    B -->|"MW01 + Product ID"| A
-    A -->|"RG01 + ID + Weight"| B
-    B -->|"MG01"| A
-    A -->|"RE01 + ID + Printer"| B
-    B -->|"ME01 + Status"| A
-```
+| Direction | Message | Purpose |
+|---|---|---|
+| PLC → MES | `RW01` | Request a new Product ID |
+| MES → PLC | `MW01` | Send Product ID to PLC |
+| PLC → MES | `RG01` | Send Product ID and measured weight |
+| MES → PLC | `MG01` | Acknowledge scale data |
+| PLC → MES | `RE01` | Send Product ID and printer number |
+| MES → PLC | `ME01` | Report label result |
 
-The demo handles **one product at a time**.
+Example cycle:
 
 ```text
-RW01 -> MW01 -> RG01 -> MG01 -> RE01 -> ME01
+PLC -> MES : RW01|
+MES -> PLC : MW01|000000000001|
+
+PLC -> MES : RG01|000000000001|0125|
+MES -> PLC : MG01|000000000001|
+
+PLC -> MES : RE01|000000000001|1|
+MES -> PLC : ME01|000000000001|0|
 ```
 
-The MES requests a new 12-character Product ID only after the PLC sends `RW01`.
+In this demo:
+
+```text
+Weight      = 0125 kg
+Printer No. = 1
+Label 0     = OK
+Label 1     = FAULT
+```
+
+`0 = OK` and `1 = FAULT` are the demo convention used by this implementation.
 
 ---
 
@@ -153,6 +177,93 @@ FC_ParseRx
 
 ---
 
+# Running the Demo
+
+## 1. Start the Python MES simulator
+
+```bash
+python mes_server.py
+```
+
+Expected output:
+
+```text
+============================================================
+        PLC - MES CONVEYOR SIMULATOR
+============================================================
+[LISTENING] TCP Port 2000
+
+[WAITING] PLC connection...
+```
+
+## 2. Start the simulated S7-1500
+
+Download the PLC project to S7-PLCSIM Advanced and place the CPU in RUN.
+
+## 3. Enable communication
+
+Set:
+
+```text
+DB_Communication.Enable = TRUE
+```
+
+The PLC establishes the TCP connection.
+
+Python should report:
+
+```text
+[CONNECTED] PLC: <PLC-IP>:<dynamic-port>
+```
+
+## 4. Start a product cycle
+
+Trigger the sequence start signal.
+
+The PLC sends:
+
+```text
+RW01|
+```
+
+The Python MES then requests:
+
+```text
+Enter Product ID (12 characters):
+```
+
+Example:
+
+```text
+000000000001
+```
+
+The remaining scale and label messages are exchanged automatically.
+
+## 5. Start another product
+
+After the sequence returns to `IDLE`, trigger a new cycle.
+
+The MES will request the next Product ID only after receiving the next `RW01`.
+
+---
+
+# Connection Recovery
+
+The Python server is designed to remain active after a PLC disconnect.
+
+```text
+[DISCONNECTED] PLC connection lost.
+[STATUS] PLC is not connected.
+[STATUS] Waiting for a new PLC connection...
+
+[WAITING] PLC connection...
+```
+
+When the PLC reconnects, a new MES session starts and the application state is reset to expect `RW01`.
+
+---
+
 ## Communication Monitoring
 
 <img src="docs/images/communication_watch_table.png" width="750">
@@ -165,29 +276,7 @@ Example communication status includes:
 - Receive acknowledgements
 - Current Product ID
 
----
-
-## Python MES Simulator
-
 <img src="docs/images/python_mes_terminal.png" width="430">
-
-The Python server:
-
-- Listens on TCP port `2000`
-- Waits for `RW01`
-- Requests a 12-character Product ID
-- Sends `MW01`
-- Acknowledges scale data with `MG01`
-- Acknowledges label data with `ME01`
-- Returns to waiting for the next product
-- Continues listening after a PLC disconnect
-
-Run:
-
-```bash
-python mes_server.py
-```
-
 ---
 
 ## Example Simulation Network
